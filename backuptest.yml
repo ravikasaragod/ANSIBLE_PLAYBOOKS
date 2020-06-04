@@ -1,0 +1,66 @@
+---
+  - hosts: localhost
+    vars:
+      backup_json: "{{ lookup('file', 'backup_json.json') }}"
+      s3bucketinfo: []
+    tasks:
+      - name: "Output all hostList as-is"
+        debug:
+          msg: "{{ backup_json }}"
+      - name: "Check if the json query success"
+        debug:
+          msg: "{{ backup_json.success }}"
+      - name: Ansible check directory.
+        stat:
+          path: /etc/hwautomate/backupscripts/users/
+        register: my_folder
+      - name: "Ansible Create directory if not exists"
+        file:
+          path: /etc/hwautomate/backupscripts/users/
+          state: directory
+          mode: 0755
+          group: root
+          owner: root
+        when:
+           - backup_json.success == 1
+           - my_folder.stat.exists == false
+      - name: Create user configs
+        copy:
+          src: /etc/hwautomate/backupscripts/s3_template.cfg
+          dest: /etc/hwautomate/backupscripts/users/{{ item.user }}.config
+          owner: root
+          group: root
+          mode: '0644'
+        with_items: "{{ backup_json.users | json_query('[*]')}}"
+
+      - name: Update S3_HOST
+        replace:
+          path: /etc/hwautomate/backupscripts/users/{{ item.user }}.config
+          regexp: "{S3_HOST}"
+          replace: "{{ item.s3.s3endpoint }}"
+        with_items: "{{ backup_json.users | json_query('[*]')}}"
+
+      - name: Update ACCESS_KEY_PASS
+        replace:
+          path: /etc/hwautomate/backupscripts/users/{{ item.user }}.config
+          regexp: "{ACCESS_KEY_PASS}"
+          replace: "{{ item.s3.s3key }}"
+        with_items: "{{ backup_json.users | json_query('[*]')}}"
+      - name: Update ACCESS_KEY_PASS
+        replace:
+          path: /etc/hwautomate/backupscripts/users/{{ item.user }}.config
+          regexp: "{ACCESS_KEY_ID}"
+          replace: "{{ item.s3.s3id }}"
+        with_items: "{{ backup_json.users | json_query('[*]')}}"
+      - name: Collecting UserName and s3info
+        shell: "echo 's3cmd -c /etc/hwautomate/backupscripts/users/{{ item.user }}.config /backup/{{ item.backup }}/accounts/{{ item.user }}.tar.gz s3://{{ item.s3.bucket }}/{{ item.user }}/{{ item.backup_name }}' >> testravi.txt"
+        with_items: "{{ backup_json.users | json_query('[*]')}}"
+      - name: Check retension period
+        find:
+          paths: "/root/ANSIBLE/testbackups/{{ item.user }}/"
+          depth: "{{ item.retention }}"
+          file_type: file
+        register: dirsOlderThan3d
+        with_items: "{{ backup_json.users | json_query('[*]')}}"
+      - debug:
+          var: "{{ dirsOlderThan3d }}"
